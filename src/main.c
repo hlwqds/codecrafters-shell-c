@@ -109,7 +109,17 @@ static void handle_cd(ParsedArgs *p) {
     return;
   }
   char buf[PATH_MAX];
-  strncpy(buf, p->buf + p->start[1], sizeof(buf));
+  char *arg1 = p->buf + p-> start[1];
+  if (*arg1 == '~') {
+    char *home = getenv("HOME");
+    if (home == NULL) {
+      perror("getenv HOME");
+      return;
+    }
+    snprintf(buf, sizeof(buf), "%s%s", home, arg1 + 1);
+  } else {
+    strncpy(buf, p->buf + p->start[1], sizeof(buf));
+  }
   buf[PATH_MAX - 1] = '\0';
 
   if (chdir(buf) == -1) {
