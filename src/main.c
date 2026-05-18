@@ -13,6 +13,7 @@ typedef enum {
   BuiltinCmdExit,
   BuiltinCmdEcho,
   BuiltinCmdType,
+  BuiltinCmdPwd,
   BuiltinCmdMax,
 } BuiltinCmd;
 
@@ -23,7 +24,7 @@ typedef struct {
   int buf_len;
 } ParsedArgs;
 
-static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type"};
+static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type", "pwd"};
 
 typedef bool (*check_seq)(unsigned char);
 
@@ -99,6 +100,20 @@ static void free_parseargs(ParsedArgs *p) {
       }
     free(p);
   }
+}
+
+static void handle_pwd(ParsedArgs *p) {
+  if (p->n != 1) {
+    fprintf(stderr, "invalid num of args\n");
+    return;
+  }
+  char buf[PATH_MAX];
+  if (getcwd(buf, sizeof(buf)) == NULL) {
+    perror("getcwd");
+    return;
+  }
+  printf("%s\n", buf);
+  return;
 }
 
 static void handle_echo(ParsedArgs *p) {
@@ -208,6 +223,8 @@ int main(int argc, char *argv[]) {
       handle_echo(p);
     } else if (strcmp(cmd, builtins[BuiltinCmdType]) == 0) {
       handle_type(p, env_p);
+    } else if (strcmp(cmd, builtins[BuiltinCmdPwd]) == 0) {
+      handle_pwd(p);
     } else if (is_externel(cmd, env_p)) {
       handle_external(p, env_p);
     } else {
