@@ -158,7 +158,7 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
   }
   char **argv = malloc((p->n + 1) * sizeof(*argv));
   if (argv == NULL) {
-    perror("malloc\n");
+    perror("malloc");
     exit(1);
   }
   for (int i = 0; i < p->n; i++) {
@@ -171,11 +171,11 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
     perror("execv");
     exit(1);
   } else if (pid < 0) {
-    perror("fork\n");
+    perror("fork");
     exit(1);
   }
   if (waitpid(pid, NULL, 0) == -1) {
-    perror("waitpid\n");
+    perror("waitpid");
     exit(1);
   }
   free(argv);
