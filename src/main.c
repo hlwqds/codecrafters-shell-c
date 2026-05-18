@@ -59,9 +59,9 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
       break;
     count++;
     while (i < len && !cb((unsigned char)cmd[i])) {
-      if (cmd[i] == '\'') {
-        i++;
-        while (i < len && cmd[i] != '\'')
+      if (cmd[i] == '\'' || cmd[i] == '"') {
+        char q = cmd[i++];
+        while (i < len && cmd[i] != q)
           i++;
         if (i < len)
           i++;
@@ -97,7 +97,7 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
 
   p->n = count;
 
-  // Second pass: extract arguments, stripping single quotes
+  // Second pass: extract arguments, stripping quotes
   int buf_pos = 0;
   i = 0;
   count = 0;
@@ -109,9 +109,9 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
 
     p->start[count++] = buf_pos;
     while (i < len && !cb((unsigned char)cmd[i])) {
-      if (cmd[i] == '\'') {
-        i++;
-        while (i < len && cmd[i] != '\'')
+      if (cmd[i] == '\'' || cmd[i] == '"') {
+        char q = cmd[i++];
+        while (i < len && cmd[i] != q)
           p->buf[buf_pos++] = cmd[i++];
         if (i < len)
           i++;
