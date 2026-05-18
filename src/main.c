@@ -14,6 +14,7 @@ typedef enum {
   BuiltinCmdEcho,
   BuiltinCmdType,
   BuiltinCmdPwd,
+  BuiltinCmdCd,
   BuiltinCmdMax,
 } BuiltinCmd;
 
@@ -24,7 +25,7 @@ typedef struct {
   int buf_len;
 } ParsedArgs;
 
-static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type", "pwd"};
+static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type", "pwd", "cd"};
 
 typedef bool (*check_seq)(unsigned char);
 
@@ -100,6 +101,22 @@ static void free_parseargs(ParsedArgs *p) {
       }
     free(p);
   }
+}
+
+static void handle_cd(ParsedArgs *p) {
+  if (p->n != 2) {
+    fprintf(stderr, "invalid num of args\n");
+    return;
+  }
+  char buf[PATH_MAX];
+  strncpy(buf, p->buf + p->start[1], sizeof(buf));
+  buf[PATH_MAX - 1] = '\0';
+
+  if (chdir(buf) == -1) {
+    fprintf(stderr, "cd: %s: No such file or directory\n", buf);
+    return;
+  }
+  return;
 }
 
 static void handle_pwd(ParsedArgs *p) {
@@ -225,6 +242,8 @@ int main(int argc, char *argv[]) {
       handle_type(p, env_p);
     } else if (strcmp(cmd, builtins[BuiltinCmdPwd]) == 0) {
       handle_pwd(p);
+    } else if (strcmp(cmd, builtins[BuiltinCmdCd]) == 0) {
+      handle_cd(p);
     } else if (is_externel(cmd, env_p)) {
       handle_external(p, env_p);
     } else {
