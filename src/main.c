@@ -47,22 +47,32 @@ static bool is_builtin_cmd(char *cmd) {
 }
 
 static ParsedArgs *parse_args(char *cmd, check_seq cb) {
-  int count = 0;
   int len = strlen(cmd);
-  bool in_arg = false;
 
-  for (int i = 0 ; i < len; i++) {
-    if (cb((unsigned char)cmd[i])) {
-      in_arg = false;
-    } else if (!in_arg) {
-      count++;
-      in_arg = true;
+  // First pass: count arguments (quote-aware)
+  int count = 0;
+  int i = 0;
+  while (i < len) {
+    while (i < len && cb((unsigned char)cmd[i]))
+      i++;
+    if (i >= len)
+      break;
+    count++;
+    while (i < len && !cb((unsigned char)cmd[i])) {
+      if (cmd[i] == '\'') {
+        i++;
+        while (i < len && cmd[i] != '\'')
+          i++;
+        if (i < len)
+          i++;
+      } else {
+        i++;
+      }
     }
   }
 
-  if (count == 0) {
+  if (count == 0)
     return NULL;
-  }
 
   ParsedArgs *p = calloc(1, sizeof(*p));
   if (p == NULL) {
@@ -70,35 +80,57 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
     exit(1);
   }
 
-  p->buf = cmd;
-  p->buf_len = len;
-  p->n = count;
-  p->start = calloc(count, sizeof(*p->start));
-  if (p->start == NULL) {
+  p->buf = calloc(len + 1, sizeof(char));
+  if (p->buf == NULL) {
     perror("calloc");
     free(p);
     exit(1);
   }
 
-  count = 0;
-  in_arg = false;
-  for (int i = 0; i < len; i++) {
-    if (cb((unsigned char)cmd[i])) {
-      in_arg = false;
-      cmd[i] = '\0';
-    } else if (!in_arg) {
-      p->start[count++] = i;
-      in_arg = true;
-    }
+  p->start = calloc(count, sizeof(*p->start));
+  if (p->start == NULL) {
+    perror("calloc");
+    free(p->buf);
+    free(p);
+    exit(1);
   }
+
+  p->n = count;
+
+  // Second pass: extract arguments, stripping single quotes
+  int buf_pos = 0;
+  i = 0;
+  count = 0;
+  while (i < len) {
+    while (i < len && cb((unsigned char)cmd[i]))
+      i++;
+    if (i >= len)
+      break;
+
+    p->start[count++] = buf_pos;
+    while (i < len && !cb((unsigned char)cmd[i])) {
+      if (cmd[i] == '\'') {
+        i++;
+        while (i < len && cmd[i] != '\'')
+          p->buf[buf_pos++] = cmd[i++];
+        if (i < len)
+          i++;
+      } else {
+        p->buf[buf_pos++] = cmd[i++];
+      }
+    }
+    p->buf[buf_pos++] = '\0';
+  }
+  p->buf_len = buf_pos;
   return p;
 }
 
 static void free_parseargs(ParsedArgs *p) {
   if (p != NULL) {
-      if (p->start) {
-        free(p->start);
-      }
+    if (p->buf)
+      free(p->buf);
+    if (p->start)
+      free(p->start);
     free(p);
   }
 }
@@ -236,9 +268,9 @@ int main(int argc, char *argv[]) {
   while (1) {  
     printf("$ ");
 
-    fgets(input, sizeof(input), stdin);
-    input[sizeof(input) - 1] = '\0';
-    input[strlen(input) - 1] = '\0';
+    if (fgets(input, sizeof(input), stdin) == NULL)
+      break;
+    input[strcspn(input, "\n")] = '\0';
     ParsedArgs *p = parse_args(input, is_space);
     if (p == NULL) {
       continue;
