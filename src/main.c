@@ -29,7 +29,9 @@ typedef struct {
     struct {
       int common_end_idx;
       int out_redir_idx;
-      int err_redir_idx;     
+      int err_redir_idx;
+      bool out_append;
+      bool err_append;
     };
   };
 } ParsedArgs;
@@ -59,8 +61,10 @@ static int reparse_args_redir(ParsedArgs *args) {
   for (int i = 0; i < args->n; i++) {
     char *arg = args->buf + args->start[i];
     bool is_out = strcmp(arg, ">") == 0 || strcmp(arg, "1>") == 0;
+    bool out_append = strcmp(arg, ">>") == 0 || strcmp(arg, "1>>") == 0;
     bool is_err = strcmp(arg, "2>") == 0;
-    if (!is_out && !is_err)
+    bool err_append = strcmp(arg, "2>>") == 0;
+    if (!is_out && !is_err && !out_append && !err_append)
       continue;
     if (i + 1 >= args->n) {
       fprintf(stderr, "syntax error near unexpected token `newline'\n");
@@ -68,10 +72,13 @@ static int reparse_args_redir(ParsedArgs *args) {
     }
     if (args->common_end_idx == args->n - 1)
       args->common_end_idx = i - 1;
-    if (is_out)
+    if (is_out || out_append) {
       args->out_redir_idx = i + 1;
-    else
+      args->out_append = out_append;
+    } else {
       args->err_redir_idx = i + 1;
+      args->err_append = err_append;
+    }
   }
   return 0;
 }
@@ -233,11 +240,13 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
 
 static void handle_cmd_cb(ParsedArgs *p, ParsedArgs *env, handle_cmd cb) {
   int saved_out = -1, saved_err = -1;
+  int out_flags = p->out_append ? (O_WRONLY | O_CREAT | O_APPEND)
+                                 : (O_WRONLY | O_CREAT | O_TRUNC);
+  int err_flags = p->err_append ? (O_WRONLY | O_CREAT | O_APPEND)
+                                : (O_WRONLY | O_CREAT | O_TRUNC);
 
   if (p->out_redir_idx != -1) {
-    int fd = open(p->buf + p->start[p->out_redir_idx],
-                  O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
+    int fd = open(p->buf + p->start[p->out_redir_idx], out_flags, 0644);    if (fd < 0) {
       perror("open redirect");
       return;
     }
@@ -246,8 +255,7 @@ static void handle_cmd_cb(ParsedArgs *p, ParsedArgs *env, handle_cmd cb) {
     close(fd);
   }
   if (p->err_redir_idx != -1) {
-    int fd = open(p->buf + p->start[p->err_redir_idx],
-                  O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(p->buf + p->start[p->err_redir_idx], err_flags, 0644);
     if (fd < 0) {
       perror("open redirect");
       goto restore_out;
