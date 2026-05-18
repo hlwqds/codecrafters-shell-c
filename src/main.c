@@ -7,7 +7,9 @@
 #include <ctype.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 typedef enum {
   BuiltinCmdExit,
@@ -23,6 +25,13 @@ typedef struct {
   int *start;
   char *buf;
   int buf_len;
+  union {
+    struct {
+      int common_end_idx;
+      int out_redir_idx;
+      int err_redir_idx;     
+    };
+  };
 } ParsedArgs;
 
 static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type", "pwd", "cd"};
@@ -44,6 +53,31 @@ static bool is_builtin_cmd(char *cmd) {
     }
   }
   return false;
+}
+
+static int generate_out_redir_fd(ParsedArgs *args) {
+  if (args->out_redir_idx == -1) {
+    return -1;  
+  }
+
+  char *path = args->buf + args->out_redir_idx;
+  return open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+}
+
+static int reparse_args_redir(ParsedArgs *args) {
+  for (int i = 0; i < args->n; i++) {
+    char *arg = args->buf + args->start[i];
+    if (strcmp(arg, ">") == 0 || strcmp(arg, "1>") == 0) {
+      if (i + 1 >= args->n) {
+        perror("> has no arg");
+        return -1;
+      }
+      args->common_end_idx = i - 1;
+      args->out_redir_idx = i + 1;
+      break;
+    }
+  }
+  return 0;
 }
 
 static ParsedArgs *parse_args(char *cmd, check_seq cb) {
@@ -105,6 +139,9 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
   }
 
   p->n = count;
+  p->common_end_idx = count - 1;
+  p->out_redir_idx = -1;
+  p->err_redir_idx = -1;
 
   // Second pass: extract arguments, stripping quotes
   int buf_pos = 0;
@@ -157,13 +194,15 @@ static void free_parseargs(ParsedArgs *p) {
   }
 }
 
-static void handle_cd(ParsedArgs *p) {
+typedef void (*handle_cmd)(ParsedArgs *, ParsedArgs *);
+
+static void handle_cd(ParsedArgs *p, ParsedArgs *_env) {
   if (p->n != 2) {
     fprintf(stderr, "invalid num of args\n");
     return;
   }
   char buf[PATH_MAX];
-  char *arg1 = p->buf + p-> start[1];
+  char *arg1 = p->buf + p->start[1];
   if (*arg1 == '~') {
     char *home = getenv("HOME");
     if (home == NULL) {
@@ -172,9 +211,8 @@ static void handle_cd(ParsedArgs *p) {
     }
     snprintf(buf, sizeof(buf), "%s%s", home, arg1 + 1);
   } else {
-    strncpy(buf, p->buf + p->start[1], sizeof(buf));
+    snprintf(buf, sizeof(buf), "%s", arg1);
   }
-  buf[PATH_MAX - 1] = '\0';
 
   if (chdir(buf) == -1) {
     fprintf(stderr, "cd: %s: No such file or directory\n", buf);
@@ -183,7 +221,7 @@ static void handle_cd(ParsedArgs *p) {
   return;
 }
 
-static void handle_pwd(ParsedArgs *p) {
+static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
   if (p->n != 1) {
     fprintf(stderr, "invalid num of args\n");
     return;
@@ -197,14 +235,50 @@ static void handle_pwd(ParsedArgs *p) {
   return;
 }
 
-static void handle_echo(ParsedArgs *p) {
-  for (int i = 1; i < p->n; i++) {
+static void handle_cmd_cb(ParsedArgs *p, ParsedArgs *env, handle_cmd cb) {
+  if (p->out_redir_idx == -1) {
+    cb(p, env);
+    return;
+  }
+  int fd = open(p->buf + p->start[p->out_redir_idx],
+                O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0) {
+    perror("open redirect");
+    return;
+  }
+  int saved = dup(STDOUT_FILENO);
+  if (saved < 0) {
+    perror("dup");
+    close(fd);
+    return;
+  }
+  if (dup2(fd, STDOUT_FILENO) < 0) {
+    perror("dup2");
+    close(fd);
+    close(saved);
+    return;
+  }
+  close(fd);
+
+  cb(p, env);
+
+  if (dup2(saved, STDOUT_FILENO) < 0) {
+    perror("dup2 restore");
+  }
+  close(saved);
+  return;
+}
+
+static void handle_echo(ParsedArgs *p, ParsedArgs *_env) {
+  
+  for (int i = 1; i <= p->common_end_idx; i++) {
     printf("%s", p->buf + p->start[i]);
-    if (i != p->n - 1) {
+    if (i != p->common_end_idx) {
       printf(" ");
     }
   }
   printf("\n");
+  return;
 }
 
 static void handle_type(ParsedArgs *p, ParsedArgs *env) {
@@ -257,10 +331,10 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
     perror("malloc");
     exit(1);
   }
-  for (int i = 0; i < p->n; i++) {
+  for (int i = 0; i <= p->common_end_idx; i++) {
     argv[i] = p->buf + p->start[i];
   }
-  argv[p->n] = NULL;
+  argv[p->common_end_idx + 1] = NULL;
   pid_t pid = fork();
   if (pid == 0) {
     execv(path, argv);
@@ -286,7 +360,7 @@ int main(int argc, char *argv[]) {
   char *path_d = strdup(path);
   ParsedArgs *env_p = parse_args(path_d, is_path_seq);
 
-  char input[100];
+  char input[4096];
   while (1) {  
     printf("$ ");
 
@@ -297,21 +371,24 @@ int main(int argc, char *argv[]) {
     if (p == NULL) {
       continue;
     }
+    if (reparse_args_redir(p) == -1) {
+      continue;
+    }
     char *cmd = p->buf + p->start[0];
     if (strcmp(cmd, builtins[BuiltinCmdExit]) == 0) {
       exit(0);
     } else if (strcmp(cmd, builtins[BuiltinCmdEcho]) == 0) {
-      handle_echo(p);
+      handle_cmd_cb(p, env_p, handle_echo);
     } else if (strcmp(cmd, builtins[BuiltinCmdType]) == 0) {
-      handle_type(p, env_p);
+      handle_cmd_cb(p, env_p, handle_type);
     } else if (strcmp(cmd, builtins[BuiltinCmdPwd]) == 0) {
-      handle_pwd(p);
+      handle_cmd_cb(p, env_p, handle_pwd);
     } else if (strcmp(cmd, builtins[BuiltinCmdCd]) == 0) {
-      handle_cd(p);
+      handle_cmd_cb(p, env_p, handle_cd);
     } else if (is_externel(cmd, env_p)) {
-      handle_external(p, env_p);
+      handle_cmd_cb(p, env_p, handle_external);
     } else {
-      printf("%s: command not found\n", input);
+      fprintf(stderr, "%s: command not found\n", input);
     }
     free_parseargs(p);
   }
