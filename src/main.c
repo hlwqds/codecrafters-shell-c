@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <limits.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 typedef enum {
@@ -135,6 +136,52 @@ static void handle_type(ParsedArgs *p, ParsedArgs *env) {
   return;
 }
 
+static bool is_externel(char *cmd, ParsedArgs *env) {
+  char path[PATH_MAX];
+  for (int i = 0; i < env->n; i++) {
+    snprintf(path, sizeof(path), "%s/%s", env->buf + env->start[i], cmd);
+    if (access(path, X_OK) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void handle_external(ParsedArgs *p, ParsedArgs *env) {
+  char path[PATH_MAX];
+  char *cmd = p->buf + p->start[0];
+  for (int i = 0; i < env->n; i++) {
+    snprintf(path, sizeof(path), "%s/%s", env->buf + env->start[i], cmd);
+    if (access(path, X_OK) == 0) {
+      break;
+    }
+  }
+  char **argv = malloc((p->n + 1) * sizeof(*argv));
+  if (argv == NULL) {
+    perror("malloc\n");
+    exit(1);
+  }
+  for (int i = 0; i < p->n; i++) {
+    argv[i] = p->buf + p->start[i];
+  }
+  argv[p->n] = NULL;
+  pid_t pid = fork();
+  if (pid == 0) {
+    execv(path, argv);
+    perror("execv");
+    exit(1);
+  } else if (pid < 0) {
+    perror("fork\n");
+    exit(1);
+  }
+  if (waitpid(pid, NULL, 0) == -1) {
+    perror("waitpid\n");
+    exit(1);
+  }
+  free(argv);
+  return;
+}
+
 int main(int argc, char *argv[]) {
   // Flush after every printf
   setbuf(stdout, NULL);
@@ -161,6 +208,8 @@ int main(int argc, char *argv[]) {
       handle_echo(p);
     } else if (strcmp(cmd, builtins[BuiltinCmdType]) == 0) {
       handle_type(p, env_p);
+    } else if (is_externel(cmd, env_p)) {
+      handle_external(p, env_p);
     } else {
       printf("%s: command not found\n", input);
     }
