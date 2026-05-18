@@ -65,8 +65,13 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
       }
       if (cmd[i] == '\'' || cmd[i] == '"') {
         char q = cmd[i++];
-        while (i < len && cmd[i] != q)
+        while (i < len && cmd[i] != q) {
+          if (cmd[i] == '\\' && q == '"') {
+            i += 2;
+            continue;
+          }
           i++;
+        }
         if (i < len)
           i++;
       } else {
@@ -121,8 +126,15 @@ static ParsedArgs *parse_args(char *cmd, check_seq cb) {
       }
       if (cmd[i] == '\'' || cmd[i] == '"') {
         char q = cmd[i++];
-        while (i < len && cmd[i] != q)
+        while (i < len && cmd[i] != q) {
+          if (cmd[i] == '\\' && q == '"') {
+            i++;
+            p->buf[buf_pos++] = cmd[i];
+            i++;
+            continue;
+          }
           p->buf[buf_pos++] = cmd[i++];
+        }
         if (i < len)
           i++;
       } else {
