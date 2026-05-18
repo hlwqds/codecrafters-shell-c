@@ -55,27 +55,23 @@ static bool is_builtin_cmd(char *cmd) {
   return false;
 }
 
-static int generate_out_redir_fd(ParsedArgs *args) {
-  if (args->out_redir_idx == -1) {
-    return -1;  
-  }
-
-  char *path = args->buf + args->out_redir_idx;
-  return open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-}
-
 static int reparse_args_redir(ParsedArgs *args) {
   for (int i = 0; i < args->n; i++) {
     char *arg = args->buf + args->start[i];
-    if (strcmp(arg, ">") == 0 || strcmp(arg, "1>") == 0) {
-      if (i + 1 >= args->n) {
-        perror("> has no arg");
-        return -1;
-      }
-      args->common_end_idx = i - 1;
-      args->out_redir_idx = i + 1;
-      break;
+    bool is_out = strcmp(arg, ">") == 0 || strcmp(arg, "1>") == 0;
+    bool is_err = strcmp(arg, "2>") == 0;
+    if (!is_out && !is_err)
+      continue;
+    if (i + 1 >= args->n) {
+      fprintf(stderr, "syntax error near unexpected token `newline'\n");
+      return -1;
     }
+    if (args->common_end_idx == args->n - 1)
+      args->common_end_idx = i - 1;
+    if (is_out)
+      args->out_redir_idx = i + 1;
+    else
+      args->err_redir_idx = i + 1;
   }
   return 0;
 }
@@ -236,37 +232,42 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
 }
 
 static void handle_cmd_cb(ParsedArgs *p, ParsedArgs *env, handle_cmd cb) {
-  if (p->out_redir_idx == -1) {
-    cb(p, env);
-    return;
-  }
-  int fd = open(p->buf + p->start[p->out_redir_idx],
-                O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (fd < 0) {
-    perror("open redirect");
-    return;
-  }
-  int saved = dup(STDOUT_FILENO);
-  if (saved < 0) {
-    perror("dup");
+  int saved_out = -1, saved_err = -1;
+
+  if (p->out_redir_idx != -1) {
+    int fd = open(p->buf + p->start[p->out_redir_idx],
+                  O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+      perror("open redirect");
+      return;
+    }
+    saved_out = dup(STDOUT_FILENO);
+    dup2(fd, STDOUT_FILENO);
     close(fd);
-    return;
   }
-  if (dup2(fd, STDOUT_FILENO) < 0) {
-    perror("dup2");
+  if (p->err_redir_idx != -1) {
+    int fd = open(p->buf + p->start[p->err_redir_idx],
+                  O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+      perror("open redirect");
+      goto restore_out;
+    }
+    saved_err = dup(STDERR_FILENO);
+    dup2(fd, STDERR_FILENO);
     close(fd);
-    close(saved);
-    return;
   }
-  close(fd);
 
   cb(p, env);
 
-  if (dup2(saved, STDOUT_FILENO) < 0) {
-    perror("dup2 restore");
+  if (saved_err != -1) {
+    dup2(saved_err, STDERR_FILENO);
+    close(saved_err);
   }
-  close(saved);
-  return;
+restore_out:
+  if (saved_out != -1) {
+    dup2(saved_out, STDOUT_FILENO);
+    close(saved_out);
+  }
 }
 
 static void handle_echo(ParsedArgs *p, ParsedArgs *_env) {
