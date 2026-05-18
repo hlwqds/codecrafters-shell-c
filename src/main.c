@@ -7,6 +7,7 @@
 typedef enum {
   BuiltinCmdExit,
   BuiltinCmdEcho,
+  BuiltinCmdType,
   BuiltinCmdMax,
 } BuiltinCmd;
 
@@ -17,7 +18,16 @@ typedef struct {
   int buf_len;
 } ParsedArgs;
 
-static const char *builtins[BuiltinCmdMax] = {"exit", "echo"};
+static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type"};
+
+static bool is_builtin_cmd(char *cmd) {
+  for (int i = 0; i < BuiltinCmdMax; i++) {
+    if (strcmp(cmd, builtins[i]) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
 
 static ParsedArgs *parse_args(char *cmd) {
   int count = 0;
@@ -86,6 +96,21 @@ static void handle_echo(ParsedArgs *p) {
   printf("\n");
 }
 
+static void handle_type(ParsedArgs *p) {
+  if (p->n != 2) {
+    fprintf(stderr, "invalid num of args\n");
+    return;
+  }
+
+  char *cmd = p->buf + p->start[1];
+  if (is_builtin_cmd(cmd)) {
+    printf("%s is a shell builtin\n", cmd);
+    return;
+  }
+  fprintf(stderr, "%s: not found\n", cmd);
+  return;
+}
+
 int main(int argc, char *argv[]) {
   // Flush after every printf
   setbuf(stdout, NULL);
@@ -106,6 +131,8 @@ int main(int argc, char *argv[]) {
       exit(0);
     } else if (strcmp(cmd, builtins[BuiltinCmdEcho]) == 0) {
       handle_echo(p);
+    } else if (strcmp(cmd, builtins[BuiltinCmdType]) == 0) {
+      handle_type(p);
     } else {
       printf("%s: command not found\n", input);
     }
