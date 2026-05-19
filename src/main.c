@@ -22,6 +22,7 @@ typedef enum {
   BuiltinCmdPwd,
   BuiltinCmdCd,
   BuiltinCmdComplete,
+  BuiltinCmdJobs,
   BuiltinCmdMax,
 } BuiltinCmd;
 
@@ -42,7 +43,7 @@ typedef struct {
 } ParsedArgs;
 
 // BuiltinCmdMax is NULL
-static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", NULL};
+static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", "jobs", NULL};
 
 typedef bool (*check_seq)(unsigned char);
 
@@ -538,6 +539,8 @@ int main(int argc, char *argv[]) {
       handle_cmd_cb(p, env_p, handle_cd);
     } else if (strcmp(cmd, builtins[BuiltinCmdComplete]) == 0) {
       handle_cmd_cb(p, env_p, handle_complete);
+    } else if (strcmp(cmd, builtins[BuiltinCmdJobs]) == 0) {
+      
     } else if (is_externel(cmd, env_p)) {
       handle_cmd_cb(p, env_p, handle_external);
     } else {
