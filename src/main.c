@@ -66,6 +66,33 @@ static bool is_path_seq(unsigned char c) {
   return c == ':';
 }
 
+static int split_pipeline(char *line, char **segments, int max) {
+  int n = 0;
+  char *p = line;
+  segments[n++] = p;
+  while (*p) {
+    if (*p == '\\') { p++; if (*p) p++; continue; }
+    if (*p == '\'' || *p == '"') {
+      char q = *p++;
+      while (*p && *p != q) {
+        if (*p == '\\' && q == '"') { p++; if (*p) p++; continue; }
+        p++;
+      }
+      if (*p) p++;
+      continue;
+    }
+    if (*p == '|') {
+      *p = '\0';
+      p++;
+      while (*p && isspace((unsigned char)*p)) p++;
+      if (*p && n < max) segments[n++] = p;
+    } else {
+      p++;
+    }
+  }
+  return n;
+}
+
 static bool is_builtin_cmd(char *cmd) {
   for (int i = 0; i < BuiltinCmdMax; i++) {
     if (strcmp(cmd, builtins[i]) == 0) {
@@ -405,10 +432,30 @@ static void handle_jobs() {
   }
 }
 
+static void run_child(ParsedArgs *p, ParsedArgs *env) {
+  setup_redirects(p);
+  char *cmd = p->buf + p->start[0];
+  if (is_builtin_cmd(cmd)) {
+    run_builtin(p, env);
+    _exit(0);
+  }
+  char *path = resolve_path(cmd, env);
+  if (!path) {
+    fprintf(stderr, "%s: command not found\n", cmd);
+    _exit(1);
+  }
+  char **argv = malloc((p->common_end_idx + 2) * sizeof(*argv));
+  for (int i = 0; i <= p->common_end_idx; i++)
+    argv[i] = p->buf + p->start[i];
+  argv[p->common_end_idx + 1] = NULL;
+  execv(path, argv);
+  perror("execv");
+  _exit(1);
+}
+
 static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   char *cmd = p->buf + p->start[0];
 
-  // Parent-only builtins
   if (strcmp(cmd, "exit") == 0) exit(0);
   if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
   if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
@@ -416,25 +463,8 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
 
   pid_t pid = fork();
   if (pid < 0) { perror("fork"); return; }
-  if (pid == 0) {
-    setup_redirects(p);
-    if (is_builtin_cmd(cmd)) {
-      run_builtin(p, env);
-      _exit(0);
-    }
-    char *path = resolve_path(cmd, env);
-    if (!path) {
-      fprintf(stderr, "%s: command not found\n", cmd);
-      _exit(1);
-    }
-    char **argv = malloc((p->common_end_idx + 2) * sizeof(*argv));
-    for (int i = 0; i <= p->common_end_idx; i++)
-      argv[i] = p->buf + p->start[i];
-    argv[p->common_end_idx + 1] = NULL;
-    execv(path, argv);
-    perror("execv");
-    _exit(1);
-  }
+  if (pid == 0) run_child(p, env);
+
   if (p->background_job) {
     job_index = next_job_number();
     job_entry *job = malloc(sizeof(*job));
@@ -443,15 +473,51 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
     int len = 0;
     for (int i = 0; i <= p->common_end_idx; i++) {
       len += snprintf(job->cmd + len, sizeof(job->cmd) - len, "%s", p->buf + p->start[i]);
-      if (i != p->common_end_idx) {
+      if (i != p->common_end_idx)
         len += snprintf(job->cmd + len, sizeof(job->cmd) - len, " ");
-      }
     }
     fprintf(stderr, "[%d] %d\n", job_index, pid);
     HASH_ADD_INT(job_table, job_index, job);
   } else {
     waitpid(pid, NULL, 0);
   }
+}
+
+static void execute_pipeline(ParsedArgs **cmds, int n, ParsedArgs *env) {
+  int (*pfds)[2] = malloc((n - 1) * sizeof(int[2]));
+  for (int i = 0; i < n - 1; i++)
+    pipe(pfds[i]);
+
+  pid_t *pids = malloc(n * sizeof(pid_t));
+  for (int i = 0; i < n; i++) {
+    pids[i] = fork();
+    if (pids[i] < 0) { perror("fork"); return; }
+    if (pids[i] == 0) {
+      if (i > 0) dup2(pfds[i-1][0], STDIN_FILENO);
+      if (i < n-1) dup2(pfds[i][1], STDOUT_FILENO);
+      for (int j = 0; j < n-1; j++) {
+        close(pfds[j][0]);
+        close(pfds[j][1]);
+      }
+      run_child(cmds[i], env);
+    }
+  }
+  for (int j = 0; j < n-1; j++) {
+    close(pfds[j][0]);
+    close(pfds[j][1]);
+  }
+
+  bool bg = cmds[n-1]->background_job;
+  if (bg) {
+    int jn = next_job_number();
+    fprintf(stderr, "[%d] %d\n", jn, pids[0]);
+  } else {
+    for (int i = 0; i < n; i++)
+      waitpid(pids[i], NULL, 0);
+  }
+
+  free(pfds);
+  free(pids);
 }
 
 static void handle_echo(ParsedArgs *p, ParsedArgs *_env) {
@@ -601,14 +667,29 @@ int main(int argc, char *argv[]) {
   while (true) {
     reap_jobs();
     line = readline("$ ");
-    ParsedArgs *p = parse_args(line, is_space);
-    if (p == NULL) {
-      free(line);
-      continue;
+    if (!line) break;
+
+    char *segments[32];
+    int nseg = split_pipeline(line, segments, 32);
+
+    if (nseg == 1) {
+      ParsedArgs *p = parse_args(segments[0], is_space);
+      if (p == NULL) { free(line); continue; }
+      reparse_args_redir(p);
+      execute_command(p, env_p);
+      free_parseargs(p);
+    } else {
+      ParsedArgs *cmds[32];
+      bool valid = true;
+      for (int i = 0; i < nseg; i++) {
+        cmds[i] = parse_args(segments[i], is_space);
+        if (cmds[i] == NULL) { valid = false; break; }
+        reparse_args_redir(cmds[i]);
+      }
+      if (valid) execute_pipeline(cmds, nseg, env_p);
+      for (int i = 0; i < nseg; i++)
+        free_parseargs(cmds[i]);
     }
-    reparse_args_redir(p);
-    execute_command(p, env_p);
-    free_parseargs(p);
     free(line);
   }
   free_parseargs(env_p);
