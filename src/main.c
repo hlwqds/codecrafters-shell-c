@@ -346,6 +346,24 @@ static char *resolve_path(char *cmd, ParsedArgs *env) {
   return NULL;
 }
 
+static void reap_jobs() {
+  job_entry *s, *tmp;
+  HASH_ITER(hh, job_table, s, tmp) {
+    if (waitpid(s->pid, NULL, WNOHANG) <= 0) {
+      continue;
+    }
+    char mark = ' ';
+    if (s->hh.next == NULL) {
+      mark = '+';
+    } else if (((job_entry *)(s->hh.next))->hh.next == NULL) {
+      mark = '-';
+    }
+    printf("[%d]%c  %-24s%s\n", s->job_index, mark, "Done", s->cmd);
+    HASH_DEL(job_table, s);
+    free(s);
+  }
+}
+
 static void handle_jobs() {
   job_entry *s;
   for (s = job_table; s != NULL; s = s->hh.next) {
@@ -553,6 +571,7 @@ int main(int argc, char *argv[]) {
 
   char *line;
   while ((line = readline("$ ")) != NULL) {
+    reap_jobs();
     ParsedArgs *p = parse_args(line, is_space);
     if (p == NULL) {
       free(line);
