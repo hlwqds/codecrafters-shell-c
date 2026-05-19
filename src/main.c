@@ -416,7 +416,8 @@ static char *script_generator(const char *text, int state) {
 
   if (state == 0) {
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "%s %s %s %s", registered_script, arg1, text, arg3);
+    snprintf(cmd, sizeof(cmd), "COMP_LINE='%s' COMP_POINT=%lu %s %s %s %s",
+             rl_line_buffer, strlen(rl_line_buffer), registered_script, arg1, text, arg3);
     fp = popen(cmd, "r");
   }
   while (fp && fgets(line, sizeof(line), fp)) {
