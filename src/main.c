@@ -45,12 +45,13 @@ typedef struct {
 } ParsedArgs;
 
 static int job_index = 0;
-static struct entry *job_table = NULL;
 typedef struct {
   int job_index;
-  char *value;
+  char cmd[256];
+  pid_t pid;
   UT_hash_handle hh;
 } job_entry;
+static job_entry *job_table = NULL;
 
 // BuiltinCmdMax is NULL
 static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", "jobs", NULL};
@@ -345,6 +346,13 @@ static char *resolve_path(char *cmd, ParsedArgs *env) {
   return NULL;
 }
 
+static void handle_jobs() {
+  job_entry *s;
+  for (s = job_table; s != NULL; s = s->hh.next) {
+    printf("[%d]+  %-24s%s &\n", s->job_index, "Running", s->cmd);
+  }
+}
+
 static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   char *cmd = p->buf + p->start[0];
 
@@ -352,7 +360,7 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   if (strcmp(cmd, "exit") == 0) exit(0);
   if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
   if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
-  if (strcmp(cmd, "jobs") == 0) { return; }
+  if (strcmp(cmd, "jobs") == 0) { handle_jobs(); return; }
 
   pid_t pid = fork();
   if (pid < 0) { perror("fork"); return; }
@@ -377,7 +385,18 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   }
   if (p->background_job) {
     job_index++;
+    job_entry *job = malloc(sizeof(*job));
+    job->job_index = job_index;
+    job->pid = pid;
+    int len = 0;
+    for (int i = 0; i <= p->common_end_idx; i++) {
+      len += snprintf(job->cmd + len, sizeof(job->cmd) - len, "%s", p->buf + p->start[i]);
+      if (i != p->common_end_idx) {
+        len += snprintf(job->cmd + len, sizeof(job->cmd) - len, " ");
+      }
+    }
     fprintf(stderr, "[%d] %d\n", job_index, pid);
+    HASH_ADD_INT(job_table, job_index, job);
   } else {
     waitpid(pid, NULL, 0);
   }
