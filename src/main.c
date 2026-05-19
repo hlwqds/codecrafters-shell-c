@@ -20,6 +20,7 @@ typedef enum {
   BuiltinCmdType,
   BuiltinCmdPwd,
   BuiltinCmdCd,
+  BuiltinCmdComplete,
   BuiltinCmdMax,
 } BuiltinCmd;
 
@@ -40,7 +41,7 @@ typedef struct {
 } ParsedArgs;
 
 // BuiltinCmdMax is NULL
-static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", NULL};
+static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", NULL};
 
 typedef bool (*check_seq)(unsigned char);
 
@@ -204,6 +205,31 @@ static void free_parseargs(ParsedArgs *p) {
 typedef void (*handle_cmd)(ParsedArgs *, ParsedArgs *);
 
 static void handle_cd(ParsedArgs *p, ParsedArgs *_env) {
+  if (p->n != 2) {
+    fprintf(stderr, "invalid num of args\n");
+    return;
+  }
+  char buf[PATH_MAX];
+  char *arg1 = p->buf + p->start[1];
+  if (*arg1 == '~') {
+    char *home = getenv("HOME");
+    if (home == NULL) {
+      perror("getenv HOME");
+      return;
+    }
+    snprintf(buf, sizeof(buf), "%s%s", home, arg1 + 1);
+  } else {
+    snprintf(buf, sizeof(buf), "%s", arg1);
+  }
+
+  if (chdir(buf) == -1) {
+    fprintf(stderr, "cd: %s: No such file or directory\n", buf);
+    return;
+  }
+  return;
+}
+
+static void handle_complete(ParsedArgs *p, ParsedArgs *_env) {
   if (p->n != 2) {
     fprintf(stderr, "invalid num of args\n");
     return;
@@ -447,6 +473,8 @@ int main(int argc, char *argv[]) {
       handle_cmd_cb(p, env_p, handle_pwd);
     } else if (strcmp(cmd, builtins[BuiltinCmdCd]) == 0) {
       handle_cmd_cb(p, env_p, handle_cd);
+    } else if (strcmp(cmd, builtins[BuiltinCmdComplete]) == 0) {
+      handle_cmd_cb(p, env_p, handle_complete);
     } else if (is_externel(cmd, env_p)) {
       handle_cmd_cb(p, env_p, handle_external);
     } else {
