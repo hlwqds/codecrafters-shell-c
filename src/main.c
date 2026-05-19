@@ -347,7 +347,8 @@ static char *resolve_path(char *cmd, ParsedArgs *env) {
 }
 
 static void reap_jobs() {
-  job_entry *s, *tmp;
+  job_entry *done[256];
+  int done_count = 0;  job_entry *s, *tmp;
   HASH_ITER(hh, job_table, s, tmp) {
     if (waitpid(s->pid, NULL, WNOHANG) <= 0) {
       continue;
@@ -359,13 +360,20 @@ static void reap_jobs() {
       mark = '-';
     }
     printf("[%d]%c  %-24s%s\n", s->job_index, mark, "Done", s->cmd);
+    done[done_count++] = s;
+  }
+
+  for (int i = 0; i < done_count; i++) {
+    s = done[i];
     HASH_DEL(job_table, s);
-    free(s);
+    free(s);   
   }
 }
 
 static void handle_jobs() {
-  job_entry *s;
+  job_entry *done[256];
+  int done_count = 0;
+  job_entry *s, *tmp;
   for (s = job_table; s != NULL; s = s->hh.next) {
     char mark = ' ';
     if (s->hh.next == NULL) {
@@ -373,7 +381,17 @@ static void handle_jobs() {
     } else if (((job_entry *)(s->hh.next))->hh.next == NULL) {
       mark = '-';
     }
-    printf("[%d]%c  %-24s%s &\n", s->job_index, mark, "Running", s->cmd);
+    if (waitpid(s->pid, NULL, WNOHANG) > 0) {
+      printf("[%d]%c  %-24s%s\n", s->job_index, mark, "Done", s->cmd);
+      done[done_count++] = s;
+    } else {
+      printf("[%d]%c  %-24s%s &\n", s->job_index, mark, "Running", s->cmd);
+    }
+  }
+  for (int i = 0; i < done_count; i++) {
+    s = done[i];
+    HASH_DEL(job_table, s);
+    free(s);   
   }
 }
 
@@ -570,8 +588,9 @@ int main(int argc, char *argv[]) {
   hcreate(1024);
 
   char *line;
-  while ((line = readline("$ ")) != NULL) {
+  while (true) {
     reap_jobs();
+    line = readline("$ ");
     ParsedArgs *p = parse_args(line, is_space);
     if (p == NULL) {
       free(line);
