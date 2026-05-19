@@ -367,65 +367,59 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
 
 static ParsedArgs *env_p = NULL;
 
-static char *get_candidates_in_path(const char *comp, bool reset) {
+static char *command_generator(const char *text, int state) {
   static char **candidates;
-  static int count;
-  static int pos;
+  static int count, pos;
 
-  if (reset) {
-    for (int i = 0; i < count; i++) {
+  if (state == 0) {
+    for (int i = 0; i < count; i++)
       free(candidates[i]);
-    }
-
+    count = 0;
     int cap = 64;
     candidates = malloc(cap * sizeof(*candidates));
-    count = 0;
 
+    for (int i = 0; i < BuiltinCmdMax; i++) {
+      if (strncmp(text, builtins[i], strlen(text)) == 0)
+        candidates[count++] = strdup(builtins[i]);
+    }
     for (int i = 0; i < env_p->n; i++) {
-      char *dir_path = env_p->buf + env_p->start[i];
-      DIR *dir = opendir(dir_path);
-      if (!dir) {
-        continue;
-      }
+      DIR *dir = opendir(env_p->buf + env_p->start[i]);
+      if (!dir) continue;
       struct dirent *entry;
       while ((entry = readdir(dir)) != NULL) {
-        if (strncmp(comp, entry->d_name, strlen(comp)) != 0) {
+        if (strncmp(text, entry->d_name, strlen(text)) != 0)
           continue;
-        }
         char fullpath[PATH_MAX];
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);
+        snprintf(fullpath, sizeof(fullpath), "%s/%s",
+                 env_p->buf + env_p->start[i], entry->d_name);
+        if (access(fullpath, X_OK) != 0)
+          continue;
+        if (count >= cap) {
+          cap *= 2;
+          candidates = realloc(candidates, cap * sizeof(*candidates));
+        }
         candidates[count++] = strdup(entry->d_name);
       }
       closedir(dir);
     }
     pos = 0;
-    return NULL;
   }
-  if (pos < count) {
+
+  if (pos < count)
     return strdup(candidates[pos++]);
+  return NULL;
+}
+
+static char **attempted_completion(const char *text, int start, int end) {
+  if (start == 0) {
+    rl_attempted_completion_over = 1;
+    return rl_completion_matches(text, command_generator);
   }
   return NULL;
 }
 
-static char *completer(const char *text, int state) {
-  static int idx;
-  if (state == 0) {
-    idx = 0;
-    get_candidates_in_path(text, true);
-  }
-
-  while (builtins[idx]) {
-    const char *word = builtins[idx++];
-    if (strncmp(text, word, strlen(text)) == 0) {
-      return strdup(word);
-    }
-  }
-
-  return get_candidates_in_path(text, false);
-}
-
 int main(int argc, char *argv[]) {
-  rl_completion_entry_function = completer;
+  rl_attempted_completion_function = attempted_completion;
   // Flush after every printf
   setbuf(stdout, NULL);
 
