@@ -341,6 +341,22 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
 }
 
 static void handle_history(ParsedArgs *p) {
+  if (p->n == 3) {
+    char *arg2 = p->buf + p->start[1];
+    char *arg3 = p->buf + p->start[2];
+    if (strcmp(arg2, "-r") == 0) {
+      char buf[512];
+      FILE *fp = fopen(arg3, "r");
+      if (fp == NULL) {
+        return;
+      }
+      while (fgets(buf, sizeof(buf), fp)) {
+        buf[strcspn(buf, "\n")] = '\0';
+        add_history(buf);
+      }
+    }
+    return;
+  }
   HIST_ENTRY **list = history_list();
   int offset = 0;
   if (!list) {
@@ -380,7 +396,6 @@ static void run_builtin(ParsedArgs *p, ParsedArgs *env) {
   if (strcmp(cmd, "echo") == 0) handle_echo(p, env);
   else if (strcmp(cmd, "type") == 0) handle_type(p, env);
   else if (strcmp(cmd, "pwd") == 0) handle_pwd(p, env);
-  else if (strcmp(cmd, "history") == 0) handle_history(p);
 }
 
 static char *resolve_path(char *cmd, ParsedArgs *env) {
@@ -476,9 +491,10 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   char *cmd = p->buf + p->start[0];
 
   if (strcmp(cmd, "exit") == 0) exit(0);
-  if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
-  if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
-  if (strcmp(cmd, "jobs") == 0) { handle_jobs(); return; }
+  else if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
+  else if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
+  else if (strcmp(cmd, "jobs") == 0) { handle_jobs(); return; }
+  else if (strcmp(cmd, "history") == 0) handle_history(p);
 
   pid_t pid = fork();
   if (pid < 0) { perror("fork"); return; }
