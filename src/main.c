@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <readline/readline.h>
 
 typedef enum {
   BuiltinCmdExit,
@@ -36,7 +37,8 @@ typedef struct {
   };
 } ParsedArgs;
 
-static const char *builtins[BuiltinCmdMax] = {"exit", "echo", "type", "pwd", "cd"};
+// BuiltinCmdMax is NULL
+static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", NULL};
 
 typedef bool (*check_seq)(unsigned char);
 
@@ -361,7 +363,23 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
   return;
 }
 
+char *completer(const char *text, int state) {
+  static int idx;
+  if (state == 0) {
+    idx = 0;
+  }
+
+  while (builtins[idx]) {
+    const char *word = builtins[idx++];
+    if (strncmp(text, word, strlen(text)) == 0) {
+      return strdup(word);
+    }
+  }
+  return NULL;
+}
+
 int main(int argc, char *argv[]) {
+  rl_completion_entry_function = completer;
   // Flush after every printf
   setbuf(stdout, NULL);
 
@@ -369,14 +387,9 @@ int main(int argc, char *argv[]) {
   char *path_d = strdup(path);
   ParsedArgs *env_p = parse_args(path_d, is_path_seq);
 
-  char input[4096];
-  while (1) {  
-    printf("$ ");
-
-    if (fgets(input, sizeof(input), stdin) == NULL)
-      break;
-    input[strcspn(input, "\n")] = '\0';
-    ParsedArgs *p = parse_args(input, is_space);
+  char *line;
+  while ((line = readline("$ ")) != NULL) {  
+    ParsedArgs *p = parse_args(line, is_space);
     if (p == NULL) {
       continue;
     }
@@ -397,9 +410,10 @@ int main(int argc, char *argv[]) {
     } else if (is_externel(cmd, env_p)) {
       handle_cmd_cb(p, env_p, handle_external);
     } else {
-      fprintf(stderr, "%s: command not found\n", input);
+      fprintf(stderr, "%s: command not found\n", cmd);
     }
     free_parseargs(p);
+    free(line);
   }
 
   return 0;
