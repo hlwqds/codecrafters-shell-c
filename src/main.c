@@ -340,12 +340,18 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
   return;
 }
 
-static void handle_history() {
+static void handle_history(ParsedArgs *p) {
   HIST_ENTRY **list = history_list();
+  int offset = 0;
   if (!list) {
     return;
   }
-  for (int i = 0; list[i]; i++) {
+  if (p->n == 2) {
+    int num = atoi(p->buf + p->start[1]);
+    offset = history_length - num > 0 ? history_length - num : 0;
+  }
+
+  for (int i = offset; i < history_length; i++) {
     printf("%5d  %s\n", i + history_base, list[i]->line);
   }
 }
@@ -374,7 +380,7 @@ static void run_builtin(ParsedArgs *p, ParsedArgs *env) {
   if (strcmp(cmd, "echo") == 0) handle_echo(p, env);
   else if (strcmp(cmd, "type") == 0) handle_type(p, env);
   else if (strcmp(cmd, "pwd") == 0) handle_pwd(p, env);
-  else if (strcmp(cmd, "history") == 0) handle_history();
+  else if (strcmp(cmd, "history") == 0) handle_history(p);
 }
 
 static char *resolve_path(char *cmd, ParsedArgs *env) {
