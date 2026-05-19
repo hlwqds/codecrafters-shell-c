@@ -245,7 +245,7 @@ static void handle_complete(ParsedArgs *p, ParsedArgs *_env) {
       return;
     }
     ENTRY *found = hsearch((ENTRY){.key = arg3}, FIND);
-    if (found) {
+    if (found && found->data != NULL) {
       printf("complete -C '%s' %s\n", (char *)found->data, arg3);
     } else {
       fprintf(stderr, "complete: %s: no completion specification\n", arg3);
@@ -258,6 +258,17 @@ static void handle_complete(ParsedArgs *p, ParsedArgs *_env) {
     }
     ENTRY e = {.key = strdup(arg4), .data = strdup(arg3)};
     hsearch(e, ENTER);
+  } else if (strcmp(arg2, "-r") == 0) {
+     if (p->n != 3) {
+      fprintf(stderr, "invalid num of args\n");
+      return;
+    }
+
+    ENTRY *found = hsearch((ENTRY){.key = arg3}, FIND);
+    if (found && found->data != NULL) {
+      free(found->data);
+      found->data = NULL;
+    }
   }
   return;
 }
@@ -487,7 +498,7 @@ static char **attempted_completion(const char *text, int start, int end) {
   line_to_complete = parse_args(rl_line_buffer, is_space);
   char *first_word = line_to_complete->n ? line_to_complete->buf + line_to_complete->start[0] : NULL;
   ENTRY *found = hsearch((ENTRY){.key = first_word}, FIND);
-  if (found) {
+  if (found && found->data != NULL) {
     rl_attempted_completion_over = 1;
     registered_script = found->data;
     return rl_completion_matches(text, script_generator);
