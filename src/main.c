@@ -349,7 +349,13 @@ static char *resolve_path(char *cmd, ParsedArgs *env) {
 static void handle_jobs() {
   job_entry *s;
   for (s = job_table; s != NULL; s = s->hh.next) {
-    printf("[%d]+  %-24s%s &\n", s->job_index, "Running", s->cmd);
+    char mark = ' ';
+    if (s->hh.next == NULL) {
+      mark = '+';
+    } else if (((job_entry *)(s->hh.next))->hh.next == NULL) {
+      mark = '-';
+    }
+    printf("[%d]%c  %-24s%s &\n", s->job_index, mark, "Running", s->cmd);
   }
 }
 
