@@ -6,11 +6,13 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <limits.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <readline/readline.h>
+#include <dirent.h>
 
 typedef enum {
   BuiltinCmdExit,
@@ -363,10 +365,53 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
   return;
 }
 
-char *completer(const char *text, int state) {
+static ParsedArgs *env_p = NULL;
+
+static char *get_candidates_in_path(const char *comp, bool reset) {
+  static char **candidates;
+  static int count;
+  static int pos;
+
+  if (reset) {
+    for (int i = 0; i < count; i++) {
+      free(candidates[i]);
+    }
+
+    int cap = 64;
+    candidates = malloc(cap * sizeof(*candidates));
+    count = 0;
+
+    for (int i = 0; i < env_p->n; i++) {
+      char *dir_path = env_p->buf + env_p->start[i];
+      DIR *dir = opendir(dir_path);
+      if (!dir) {
+        continue;
+      }
+      struct dirent *entry;
+      while ((entry = readdir(dir)) != NULL) {
+        if (strncmp(comp, entry->d_name, strlen(comp)) != 0) {
+          continue;
+        }
+        char fullpath[PATH_MAX];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);
+        candidates[count++] = strdup(entry->d_name);
+      }
+      closedir(dir);
+    }
+    pos = 0;
+    return NULL;
+  }
+  if (pos < count) {
+    return strdup(candidates[pos++]);
+  }
+  return NULL;
+}
+
+static char *completer(const char *text, int state) {
   static int idx;
   if (state == 0) {
     idx = 0;
+    get_candidates_in_path(text, true);
   }
 
   while (builtins[idx]) {
@@ -375,7 +420,8 @@ char *completer(const char *text, int state) {
       return strdup(word);
     }
   }
-  return NULL;
+
+  return get_candidates_in_path(text, false);
 }
 
 int main(int argc, char *argv[]) {
@@ -385,7 +431,7 @@ int main(int argc, char *argv[]) {
 
   const char *path = getenv("PATH");
   char *path_d = strdup(path);
-  ParsedArgs *env_p = parse_args(path_d, is_path_seq);
+  env_p = parse_args(path_d, is_path_seq);
 
   char *line;
   while ((line = readline("$ ")) != NULL) {  
@@ -415,6 +461,7 @@ int main(int argc, char *argv[]) {
     free_parseargs(p);
     free(line);
   }
+  free_parseargs(env_p);
 
   return 0;
 }
