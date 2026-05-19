@@ -14,6 +14,7 @@
 #include <readline/readline.h>
 #include <dirent.h>
 #include <search.h>
+#include "uthash.h"
 
 typedef enum {
   BuiltinCmdExit,
@@ -38,9 +39,18 @@ typedef struct {
       int err_redir_idx;
       bool out_append;
       bool err_append;
+      bool background_job;
     };
   };
 } ParsedArgs;
+
+static int job_index = 0;
+static struct entry *job_table = NULL;
+typedef struct {
+  int job_index;
+  char *value;
+  UT_hash_handle hh;
+} job_entry;
 
 // BuiltinCmdMax is NULL
 static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", "jobs", NULL};
@@ -71,8 +81,15 @@ static int reparse_args_redir(ParsedArgs *args) {
     bool out_append = strcmp(arg, ">>") == 0 || strcmp(arg, "1>>") == 0;
     bool is_err = strcmp(arg, "2>") == 0;
     bool err_append = strcmp(arg, "2>>") == 0;
-    if (!is_out && !is_err && !out_append && !err_append)
+    bool background_job = strcmp(arg, "&") == 0;
+    if (!is_out && !is_err && !out_append && !err_append && !background_job)
       continue;
+    if (background_job) {
+      if (args->common_end_idx == args->n - 1)
+        args->common_end_idx = i - 1;
+      args->background_job = true;
+      continue;
+    }
     if (i + 1 >= args->n) {
       fprintf(stderr, "syntax error near unexpected token `newline'\n");
       return -1;
@@ -85,6 +102,9 @@ static int reparse_args_redir(ParsedArgs *args) {
     } else {
       args->err_redir_idx = i + 1;
       args->err_append = err_append;
+    }
+    if (background_job) {
+      args->background_job = true;
     }
   }
   return 0;
@@ -204,7 +224,9 @@ static void free_parseargs(ParsedArgs *p) {
   }
 }
 
-typedef void (*handle_cmd)(ParsedArgs *, ParsedArgs *);
+static void handle_echo(ParsedArgs *p, ParsedArgs *_env);
+static void handle_type(ParsedArgs *p, ParsedArgs *env);
+static void handle_pwd(ParsedArgs *p, ParsedArgs *_env);
 
 static void handle_cd(ParsedArgs *p, ParsedArgs *_env) {
   if (p->n != 2) {
@@ -288,43 +310,76 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
   return;
 }
 
-static void handle_cmd_cb(ParsedArgs *p, ParsedArgs *env, handle_cmd cb) {
-  int saved_out = -1, saved_err = -1;
+static void setup_redirects(ParsedArgs *p) {
   int out_flags = p->out_append ? (O_WRONLY | O_CREAT | O_APPEND)
-                                 : (O_WRONLY | O_CREAT | O_TRUNC);
+                                : (O_WRONLY | O_CREAT | O_TRUNC);
   int err_flags = p->err_append ? (O_WRONLY | O_CREAT | O_APPEND)
                                 : (O_WRONLY | O_CREAT | O_TRUNC);
-
   if (p->out_redir_idx != -1) {
-    int fd = open(p->buf + p->start[p->out_redir_idx], out_flags, 0644);    if (fd < 0) {
-      perror("open redirect");
-      return;
-    }
-    saved_out = dup(STDOUT_FILENO);
+    int fd = open(p->buf + p->start[p->out_redir_idx], out_flags, 0644);
+    if (fd < 0) { perror("open redirect"); _exit(1); }
     dup2(fd, STDOUT_FILENO);
     close(fd);
   }
   if (p->err_redir_idx != -1) {
     int fd = open(p->buf + p->start[p->err_redir_idx], err_flags, 0644);
-    if (fd < 0) {
-      perror("open redirect");
-      goto restore_out;
-    }
-    saved_err = dup(STDERR_FILENO);
+    if (fd < 0) { perror("open redirect"); _exit(1); }
     dup2(fd, STDERR_FILENO);
     close(fd);
   }
+}
 
-  cb(p, env);
+static void run_builtin(ParsedArgs *p, ParsedArgs *env) {
+  char *cmd = p->buf + p->start[0];
+  if (strcmp(cmd, "echo") == 0) handle_echo(p, env);
+  else if (strcmp(cmd, "type") == 0) handle_type(p, env);
+  else if (strcmp(cmd, "pwd") == 0) handle_pwd(p, env);
+}
 
-  if (saved_err != -1) {
-    dup2(saved_err, STDERR_FILENO);
-    close(saved_err);
+static char *resolve_path(char *cmd, ParsedArgs *env) {
+  static char path[PATH_MAX];
+  for (int i = 0; i < env->n; i++) {
+    snprintf(path, sizeof(path), "%s/%s", env->buf + env->start[i], cmd);
+    if (access(path, X_OK) == 0) return path;
   }
-restore_out:
-  if (saved_out != -1) {
-    dup2(saved_out, STDOUT_FILENO);
-    close(saved_out);
+  return NULL;
+}
+
+static void execute_command(ParsedArgs *p, ParsedArgs *env) {
+  char *cmd = p->buf + p->start[0];
+
+  // Parent-only builtins
+  if (strcmp(cmd, "exit") == 0) exit(0);
+  if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
+  if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
+  if (strcmp(cmd, "jobs") == 0) { return; }
+
+  pid_t pid = fork();
+  if (pid < 0) { perror("fork"); return; }
+  if (pid == 0) {
+    setup_redirects(p);
+    if (is_builtin_cmd(cmd)) {
+      run_builtin(p, env);
+      _exit(0);
+    }
+    char *path = resolve_path(cmd, env);
+    if (!path) {
+      fprintf(stderr, "%s: command not found\n", cmd);
+      _exit(1);
+    }
+    char **argv = malloc((p->common_end_idx + 2) * sizeof(*argv));
+    for (int i = 0; i <= p->common_end_idx; i++)
+      argv[i] = p->buf + p->start[i];
+    argv[p->common_end_idx + 1] = NULL;
+    execv(path, argv);
+    perror("execv");
+    _exit(1);
+  }
+  if (p->background_job) {
+    job_index++;
+    fprintf(stderr, "[%d] %d\n", job_index, pid);
+  } else {
+    waitpid(pid, NULL, 0);
   }
 }
 
@@ -362,52 +417,6 @@ static void handle_type(ParsedArgs *p, ParsedArgs *env) {
   }
 
   fprintf(stderr, "%s: not found\n", cmd);
-  return;
-}
-
-static bool is_externel(char *cmd, ParsedArgs *env) {
-  char path[PATH_MAX];
-  for (int i = 0; i < env->n; i++) {
-    snprintf(path, sizeof(path), "%s/%s", env->buf + env->start[i], cmd);
-    if (access(path, X_OK) == 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
-static void handle_external(ParsedArgs *p, ParsedArgs *env) {
-  char path[PATH_MAX];
-  char *cmd = p->buf + p->start[0];
-  for (int i = 0; i < env->n; i++) {
-    snprintf(path, sizeof(path), "%s/%s", env->buf + env->start[i], cmd);
-    if (access(path, X_OK) == 0) {
-      break;
-    }
-  }
-  char **argv = malloc((p->n + 1) * sizeof(*argv));
-  if (argv == NULL) {
-    perror("malloc");
-    exit(1);
-  }
-  for (int i = 0; i <= p->common_end_idx; i++) {
-    argv[i] = p->buf + p->start[i];
-  }
-  argv[p->common_end_idx + 1] = NULL;
-  pid_t pid = fork();
-  if (pid == 0) {
-    execv(path, argv);
-    perror("execv");
-    exit(1);
-  } else if (pid < 0) {
-    perror("fork");
-    exit(1);
-  }
-  if (waitpid(pid, NULL, 0) == -1) {
-    perror("waitpid");
-    exit(1);
-  }
-  free(argv);
   return;
 }
 
@@ -518,34 +527,14 @@ int main(int argc, char *argv[]) {
   hcreate(1024);
 
   char *line;
-  while ((line = readline("$ ")) != NULL) {  
+  while ((line = readline("$ ")) != NULL) {
     ParsedArgs *p = parse_args(line, is_space);
     if (p == NULL) {
+      free(line);
       continue;
     }
-    if (reparse_args_redir(p) == -1) {
-      continue;
-    }
-    char *cmd = p->buf + p->start[0];
-    if (strcmp(cmd, builtins[BuiltinCmdExit]) == 0) {
-      exit(0);
-    } else if (strcmp(cmd, builtins[BuiltinCmdEcho]) == 0) {
-      handle_cmd_cb(p, env_p, handle_echo);
-    } else if (strcmp(cmd, builtins[BuiltinCmdType]) == 0) {
-      handle_cmd_cb(p, env_p, handle_type);
-    } else if (strcmp(cmd, builtins[BuiltinCmdPwd]) == 0) {
-      handle_cmd_cb(p, env_p, handle_pwd);
-    } else if (strcmp(cmd, builtins[BuiltinCmdCd]) == 0) {
-      handle_cmd_cb(p, env_p, handle_cd);
-    } else if (strcmp(cmd, builtins[BuiltinCmdComplete]) == 0) {
-      handle_cmd_cb(p, env_p, handle_complete);
-    } else if (strcmp(cmd, builtins[BuiltinCmdJobs]) == 0) {
-      
-    } else if (is_externel(cmd, env_p)) {
-      handle_cmd_cb(p, env_p, handle_external);
-    } else {
-      fprintf(stderr, "%s: command not found\n", cmd);
-    }
+    reparse_args_redir(p);
+    execute_command(p, env_p);
     free_parseargs(p);
     free(line);
   }
