@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <search.h>
 #include "uthash.h"
+#include <readline/history.h>
 
 typedef enum {
   BuiltinCmdExit,
@@ -339,6 +340,16 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
   return;
 }
 
+static void handle_history() {
+  HIST_ENTRY **list = history_list();
+  if (!list) {
+    return;
+  }
+  for (int i = 0; list[i]; i++) {
+    printf("%5d  %s\n", i + history_base, list[i]->line);
+  }
+}
+
 static void setup_redirects(ParsedArgs *p) {
   int out_flags = p->out_append ? (O_WRONLY | O_CREAT | O_APPEND)
                                 : (O_WRONLY | O_CREAT | O_TRUNC);
@@ -363,6 +374,7 @@ static void run_builtin(ParsedArgs *p, ParsedArgs *env) {
   if (strcmp(cmd, "echo") == 0) handle_echo(p, env);
   else if (strcmp(cmd, "type") == 0) handle_type(p, env);
   else if (strcmp(cmd, "pwd") == 0) handle_pwd(p, env);
+  else if (strcmp(cmd, "history") == 0) handle_history();
 }
 
 static char *resolve_path(char *cmd, ParsedArgs *env) {
@@ -669,6 +681,9 @@ int main(int argc, char *argv[]) {
     reap_jobs();
     line = readline("$ ");
     if (!line) break;
+    if (*line) {
+      add_history(line); 
+    }
 
     char *segments[32];
     int nseg = split_pipeline(line, segments, 32);
