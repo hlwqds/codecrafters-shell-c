@@ -402,14 +402,21 @@ static void handle_external(ParsedArgs *p, ParsedArgs *env) {
 static ParsedArgs *env_p = NULL;
 
 static char *registered_script;
+static ParsedArgs *line_to_complete;
 
 static char *script_generator(const char *text, int state) {
   static FILE *fp = NULL;
   static char line[256];
+  char *arg1 = line_to_complete->n > 0
+                   ? line_to_complete->buf + line_to_complete->start[0]
+                   : "";
+  char *arg3 = line_to_complete->n >= 2
+                   ? line_to_complete->buf + line_to_complete->start[line_to_complete->n - 2]
+                   : "";
 
   if (state == 0) {
     char cmd[512];
-    snprintf(cmd, sizeof(cmd), "%s '%s'", registered_script, text);
+    snprintf(cmd, sizeof(cmd), "%s %s %s %s", registered_script, arg1, text, arg3);
     fp = popen(cmd, "r");
   }
   while (fp && fgets(line, sizeof(line), fp)) {
@@ -469,30 +476,16 @@ static char *command_generator(const char *text, int state) {
   return NULL;
 }
 
-static char *extract_first_word(void) {
-  char *line = rl_line_buffer;
-  while (*line && isspace((unsigned char)*line)) {
-    line++;
-  }
-  if (!*line) {
-    return NULL;
-  }
-  int len = 0;
-  while (line[len] && !isspace((unsigned char)line[len])) {
-    len++;
-  }
-  return strndup(line, len);
-}
-
 static char **attempted_completion(const char *text, int start, int end) {
   if (start == 0) {
     rl_attempted_completion_over = 1;
     return rl_completion_matches(text, command_generator);
   }
-  char *first_word = extract_first_word();
   registered_script = NULL;
+  free_parseargs(line_to_complete);
+  line_to_complete = parse_args(rl_line_buffer, is_space);
+  char *first_word = line_to_complete->n ? line_to_complete->buf + line_to_complete->start[0] : NULL;
   ENTRY *found = hsearch((ENTRY){.key = first_word}, FIND);
-  free(first_word);
   if (found) {
     rl_attempted_completion_over = 1;
     registered_script = found->data;
