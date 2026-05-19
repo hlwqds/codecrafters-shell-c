@@ -345,15 +345,9 @@ static void handle_history(ParsedArgs *p) {
     char *arg2 = p->buf + p->start[1];
     char *arg3 = p->buf + p->start[2];
     if (strcmp(arg2, "-r") == 0) {
-      char buf[512];
-      FILE *fp = fopen(arg3, "r");
-      if (fp == NULL) {
-        return;
-      }
-      while (fgets(buf, sizeof(buf), fp)) {
-        buf[strcspn(buf, "\n")] = '\0';
-        add_history(buf);
-      }
+      read_history(arg3);
+    } else if (strcmp(arg2, "-w") == 0) {
+      write_history(arg3);
     }
     return;
   }
