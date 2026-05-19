@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <readline/readline.h>
 #include <dirent.h>
+#include <search.h>
 
 typedef enum {
   BuiltinCmdExit,
@@ -230,18 +231,34 @@ static void handle_cd(ParsedArgs *p, ParsedArgs *_env) {
 }
 
 static void handle_complete(ParsedArgs *p, ParsedArgs *_env) {
-  if (p->n != 3) {
+  if (p->n < 2) {
     fprintf(stderr, "invalid num of args\n");
     return;
   }
 
   const char *arg2 = p->buf + p->start[1];
-  const char *arg3 = p->buf + p->start[2];
+  char *arg3 = p->buf + p->start[2];
 
   if (strcmp(arg2, "-p") == 0) {
-    fprintf(stderr, "complete: %s: no completion specification\n", arg3);
+    if (p->n != 3) {
+      fprintf(stderr, "invalid num of args\n");
+      return;
+    }
+    ENTRY *found = hsearch((ENTRY){.key = arg3}, FIND);
+    if (found) {
+      printf("complete -C '%s' %s\n", (char *)found->data, arg3);
+    } else {
+      fprintf(stderr, "complete: %s: no completion specification\n", arg3);
+    }
+  } else if (strcmp(arg2, "-C") == 0) {
+    const char *arg4 = p->buf + p->start[3];
+    if (p->n != 4) {
+      fprintf(stderr, "invalid num of args\n");
+      return;
+    }
+    ENTRY e = {.key = strdup(arg4), .data = strdup(arg3)};
+    hsearch(e, ENTER);
   }
-
   return;
 }
 
@@ -443,6 +460,7 @@ int main(int argc, char *argv[]) {
   const char *path = getenv("PATH");
   char *path_d = strdup(path);
   env_p = parse_args(path_d, is_path_seq);
+  hcreate(1024);
 
   char *line;
   while ((line = readline("$ ")) != NULL) {  
