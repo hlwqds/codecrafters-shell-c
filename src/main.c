@@ -346,6 +346,16 @@ static char *resolve_path(char *cmd, ParsedArgs *env) {
   return NULL;
 }
 
+static int next_job_number() {
+  for (int i = 1; ; i++) {
+    job_entry *s;
+    HASH_FIND_INT(job_table, &i, s);
+    if (s == NULL) {
+      return i;
+    }
+  }
+}
+
 static void reap_jobs() {
   job_entry *done[256];
   int done_count = 0;  job_entry *s, *tmp;
@@ -426,7 +436,7 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
     _exit(1);
   }
   if (p->background_job) {
-    job_index++;
+    job_index = next_job_number();
     job_entry *job = malloc(sizeof(*job));
     job->job_index = job_index;
     job->pid = pid;
