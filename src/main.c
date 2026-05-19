@@ -230,27 +230,18 @@ static void handle_cd(ParsedArgs *p, ParsedArgs *_env) {
 }
 
 static void handle_complete(ParsedArgs *p, ParsedArgs *_env) {
-  if (p->n != 2) {
+  if (p->n != 3) {
     fprintf(stderr, "invalid num of args\n");
     return;
   }
-  char buf[PATH_MAX];
-  char *arg1 = p->buf + p->start[1];
-  if (*arg1 == '~') {
-    char *home = getenv("HOME");
-    if (home == NULL) {
-      perror("getenv HOME");
-      return;
-    }
-    snprintf(buf, sizeof(buf), "%s%s", home, arg1 + 1);
-  } else {
-    snprintf(buf, sizeof(buf), "%s", arg1);
+
+  const char *arg2 = p->buf + p->start[1];
+  const char *arg3 = p->buf + p->start[2];
+
+  if (strcmp(arg2, "-p") == 0) {
+    fprintf(stderr, "complete: %s: no completion specification\n", arg3);
   }
 
-  if (chdir(buf) == -1) {
-    fprintf(stderr, "cd: %s: No such file or directory\n", buf);
-    return;
-  }
   return;
 }
 
