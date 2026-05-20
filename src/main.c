@@ -399,7 +399,7 @@ static bool validate_declare(char *v) {
       }
       continue;
     }
-    if (!isalpha(v[i])) {
+    if (!isalpha(v[i]) && !isdigit(v[i]) && v[i] != '_') {
       return false;
     }
   }
@@ -629,10 +629,33 @@ static void execute_pipeline(ParsedArgs **cmds, int n, ParsedArgs *env) {
   free(pids);
 }
 
+static char *expand_vars(const char *input) {
+  char buf[1024] = {0};
+  int pos = 0;
+  const char *p = input;
+  while (*p) {
+    if (*p == '$') {
+      p++;
+      const char *name_start = p;
+      while (*p && (isalnum(*p) || *p == '_')) p++;
+      char name[256] = {0};
+      strncpy(name, name_start, p - name_start);
+      declare_entry *e = NULL;
+      HASH_FIND_STR(declare_table, name, e);
+      if (e) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", e->value);
+      }
+    } else {
+      buf[pos++] = *p++;
+    }
+  }
+  return strdup(buf);
+}
+
 static void handle_echo(ParsedArgs *p, ParsedArgs *_env) {
-  
   for (int i = 1; i <= p->common_end_idx; i++) {
-    printf("%s", p->buf + p->start[i]);
+    char *v = parsed_args_n_arg(p, i);
+    printf("%s", v);
     if (i != p->common_end_idx) {
       printf(" ");
     }
@@ -787,22 +810,28 @@ int main(int argc, char *argv[]) {
     int nseg = split_pipeline(line, segments, 32);
 
     if (nseg == 1) {
-      ParsedArgs *p = parse_args(segments[0], is_space);
+      char *ex = expand_vars(segments[0]);
+      ParsedArgs *p = parse_args(ex, is_space);
       if (p == NULL) { free(line); continue; }
       reparse_args_redir(p);
       execute_command(p, env_p);
       free_parseargs(p);
+      free(ex);
     } else {
       ParsedArgs *cmds[32];
+      char *ex[32];
       bool valid = true;
       for (int i = 0; i < nseg; i++) {
-        cmds[i] = parse_args(segments[i], is_space);
+        ex[i] = expand_vars(segments[i]);
+        cmds[i] = parse_args(ex[i], is_space);
         if (cmds[i] == NULL) { valid = false; break; }
         reparse_args_redir(cmds[i]);
       }
       if (valid) execute_pipeline(cmds, nseg, env_p);
-      for (int i = 0; i < nseg; i++)
+      for (int i = 0; i < nseg; i++) {
         free_parseargs(cmds[i]);
+        free(ex[i]);
+      }
     }
     free(line);
   }
