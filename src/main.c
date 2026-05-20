@@ -47,6 +47,13 @@ typedef struct {
   };
 } ParsedArgs;
 
+static char *parsed_args_n_arg(ParsedArgs *p, int n) {
+  if (p->n > n) {
+    return p->buf + p->start[n];
+  }
+  return NULL;
+}
+
 static int job_index = 0;
 static char *histfile;
 typedef struct {
@@ -56,6 +63,13 @@ typedef struct {
   UT_hash_handle hh;
 } job_entry;
 static job_entry *job_table = NULL;
+
+typedef struct {
+  char key[256];
+  char value[256];
+  UT_hash_handle hh;
+} declare_entry;
+static declare_entry *declare_table = NULL;
 
 // BuiltinCmdMax is NULL
 static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", "jobs", "declare", "history", NULL};
@@ -68,6 +82,10 @@ static bool is_space(unsigned char c) {
 
 static bool is_path_seq(unsigned char c) {
   return c == ':';
+}
+
+static bool is_declare_seq(unsigned char c) {
+  return c == '=';
 }
 
 static int split_pipeline(char *line, char **segments, int max) {
@@ -374,14 +392,37 @@ static void handle_history(ParsedArgs *p) {
 }
 
 static void handle_declare(ParsedArgs *p) {
-  if (p->n != 3) {
+  if (p->n != 3 && p->n != 2) {
     perror("declare invalid arg num");
     return;
   }
-  char *arg2 = p->buf + p->start[1];
-  char *arg3 = p->buf + p->start[2];
-  if (strcmp(arg2, "-p") == 0) {
-    fprintf(stderr, "declare: %s: not found\n", arg3);
+
+  if (p->n == 2) {
+    char *arg2 = p->buf + p->start[1];
+    ParsedArgs *kv = parse_args(arg2, is_declare_seq);
+    if (kv ->n != 2) {
+      perror("invalid arg");
+    } else {
+      char *key = parsed_args_n_arg(kv, 0);
+      char *value = parsed_args_n_arg(kv, 1);
+      declare_entry *entry = calloc(1, sizeof(*entry));
+      strncpy(entry->key, key, sizeof(entry->key));
+      strncpy(entry->value, value, sizeof(entry->value));
+      HASH_ADD_STR(declare_table, key, entry);
+    }
+    free_parseargs(kv);   
+  } else {
+    char *arg2 = p->buf + p->start[1];
+    char *arg3 = p->buf + p->start[2];
+    if (strcmp(arg2, "-p") == 0) {
+      declare_entry *entry = NULL;
+      HASH_FIND_STR(declare_table, arg3, entry);
+      if (entry == NULL) {
+        fprintf(stderr, "declare: %s: not found\n", arg3);
+      } else {
+        printf("declare -- %s=\"%s\"\n", arg3, entry->value);
+      }
+    }
   }
 }
 
@@ -507,8 +548,8 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   else if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
   else if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
   else if (strcmp(cmd, "jobs") == 0) { handle_jobs(); return; }
-  else if (strcmp(cmd, "history") == 0) handle_history(p);
-  else if (strcmp(cmd, "declare") == 0) handle_declare(p);
+  else if (strcmp(cmd, "history") == 0) { handle_history(p); return; }
+  else if (strcmp(cmd, "declare") == 0) { handle_declare(p); return; }
 
   pid_t pid = fork();
   if (pid < 0) { perror("fork"); return; }
