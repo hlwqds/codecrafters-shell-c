@@ -47,6 +47,7 @@ typedef struct {
 } ParsedArgs;
 
 static int job_index = 0;
+static char *histfile;
 typedef struct {
   int job_index;
   char cmd[256];
@@ -489,7 +490,7 @@ static void run_child(ParsedArgs *p, ParsedArgs *env) {
 static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   char *cmd = p->buf + p->start[0];
 
-  if (strcmp(cmd, "exit") == 0) exit(0);
+  if (strcmp(cmd, "exit") == 0) { write_history(histfile); exit(0);}
   else if (strcmp(cmd, "cd") == 0) { handle_cd(p, env); return; }
   else if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
   else if (strcmp(cmd, "jobs") == 0) { handle_jobs(); return; }
@@ -694,7 +695,7 @@ int main(int argc, char *argv[]) {
 
   const char *path = getenv("PATH");
   char *path_d = strdup(path);
-  const char *histfile = getenv("HISTFILE");
+  histfile = getenv("HISTFILE");
   read_history(histfile);
   env_p = parse_args(path_d, is_path_seq);
   hcreate(1024);
