@@ -340,6 +340,8 @@ static void handle_pwd(ParsedArgs *p, ParsedArgs *_env) {
   return;
 }
 
+static int pre_written = 0;
+
 static void handle_history(ParsedArgs *p) {
   if (p->n == 3) {
     char *arg2 = p->buf + p->start[1];
@@ -348,6 +350,9 @@ static void handle_history(ParsedArgs *p) {
       read_history(arg3);
     } else if (strcmp(arg2, "-w") == 0) {
       write_history(arg3);
+    } else if (strcmp(arg2, "-a") == 0) {
+      append_history(history_length - pre_written, arg3);
+      pre_written = history_length;
     }
     return;
   }
