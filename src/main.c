@@ -694,6 +694,8 @@ int main(int argc, char *argv[]) {
 
   const char *path = getenv("PATH");
   char *path_d = strdup(path);
+  const char *histfile = getenv("HISTFILE");
+  read_history(histfile);
   env_p = parse_args(path_d, is_path_seq);
   hcreate(1024);
 
@@ -730,6 +732,7 @@ int main(int argc, char *argv[]) {
     free(line);
   }
   free_parseargs(env_p);
+  free(path_d);
 
   return 0;
 }
