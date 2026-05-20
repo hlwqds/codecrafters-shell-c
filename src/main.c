@@ -26,6 +26,7 @@ typedef enum {
   BuiltinCmdComplete,
   BuiltinCmdJobs,
   BuiltinCmdHistory,
+  BuiltinCmdDeclare,
   BuiltinCmdMax,
 } BuiltinCmd;
 
@@ -57,7 +58,7 @@ typedef struct {
 static job_entry *job_table = NULL;
 
 // BuiltinCmdMax is NULL
-static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", "jobs", "history", NULL};
+static const char *builtins[BuiltinCmdMax + 1] = {"exit", "echo", "type", "pwd", "cd", "complete", "jobs", "declare", "history", NULL};
 
 typedef bool (*check_seq)(unsigned char);
 
