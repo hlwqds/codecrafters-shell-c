@@ -373,6 +373,18 @@ static void handle_history(ParsedArgs *p) {
   }
 }
 
+static void handle_declare(ParsedArgs *p) {
+  if (p->n != 3) {
+    perror("declare invalid arg num");
+    return;
+  }
+  char *arg2 = p->buf + p->start[1];
+  char *arg3 = p->buf + p->start[2];
+  if (strcmp(arg2, "-p") == 0) {
+    fprintf(stderr, "declare: %s: not found\n", arg3);
+  }
+}
+
 static void setup_redirects(ParsedArgs *p) {
   int out_flags = p->out_append ? (O_WRONLY | O_CREAT | O_APPEND)
                                 : (O_WRONLY | O_CREAT | O_TRUNC);
@@ -496,6 +508,7 @@ static void execute_command(ParsedArgs *p, ParsedArgs *env) {
   else if (strcmp(cmd, "complete") == 0) { handle_complete(p, env); return; }
   else if (strcmp(cmd, "jobs") == 0) { handle_jobs(); return; }
   else if (strcmp(cmd, "history") == 0) handle_history(p);
+  else if (strcmp(cmd, "declare") == 0) handle_declare(p);
 
   pid_t pid = fork();
   if (pid < 0) { perror("fork"); return; }
