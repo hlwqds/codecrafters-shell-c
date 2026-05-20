@@ -391,6 +391,21 @@ static void handle_history(ParsedArgs *p) {
   }
 }
 
+static bool validate_declare(char *v) {
+  for (int i = 0; i < strlen(v); i++) {
+    if (i == 0) {
+      if (!isalpha(v[i]) && v[i] != '_') {
+        return false;
+      }
+      continue;
+    }
+    if (!isalpha(v[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static void handle_declare(ParsedArgs *p) {
   if (p->n != 3 && p->n != 2) {
     perror("declare invalid arg num");
@@ -405,10 +420,14 @@ static void handle_declare(ParsedArgs *p) {
     } else {
       char *key = parsed_args_n_arg(kv, 0);
       char *value = parsed_args_n_arg(kv, 1);
-      declare_entry *entry = calloc(1, sizeof(*entry));
-      strncpy(entry->key, key, sizeof(entry->key));
-      strncpy(entry->value, value, sizeof(entry->value));
-      HASH_ADD_STR(declare_table, key, entry);
+      if (validate_declare(key)) {
+        declare_entry *entry = calloc(1, sizeof(*entry));
+        strncpy(entry->key, key, sizeof(entry->key));
+        strncpy(entry->value, value, sizeof(entry->value));
+        HASH_ADD_STR(declare_table, key, entry);        
+      } else {
+        fprintf(stderr, "declare: `%s=%s': not a valid identifier\n", key, value);
+      }
     }
     free_parseargs(kv);   
   } else {
