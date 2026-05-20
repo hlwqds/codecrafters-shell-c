@@ -635,15 +635,26 @@ static char *expand_vars(const char *input) {
   const char *p = input;
   while (*p) {
     if (*p == '$') {
+      bool brace = false;
       p++;
       const char *name_start = p;
-      while (*p && (isalnum(*p) || *p == '_')) p++;
+      if (*p == '{') {
+        name_start++;
+        p++;
+        brace = true;
+        while (*p != '}') p++;
+      } else {
+        while (*p && (isalnum(*p) || *p == '_')) p++;
+      }
       char name[256] = {0};
       strncpy(name, name_start, p - name_start);
       declare_entry *e = NULL;
       HASH_FIND_STR(declare_table, name, e);
       if (e) {
         pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", e->value);
+      }
+      if (brace) {
+        p++;
       }
     } else {
       buf[pos++] = *p++;
